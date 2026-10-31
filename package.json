@@ -1,0 +1,17 @@
+{
+  "name": "content-production-manager",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "مدير إنتاج المحتوى الأسبوعي — القيادي · رائج · عرب جيمرز · سائح",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "web-push": "^3.6.7"
+  }
+}

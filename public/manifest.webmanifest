@@ -1,0 +1,11 @@
+{
+  "name": "مدير إنتاج المحتوى",
+  "short_name": "الإنتاج",
+  "start_url": "/",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "ar",
+  "background_color": "#0a1a33",
+  "theme_color": "#0a1a33",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
