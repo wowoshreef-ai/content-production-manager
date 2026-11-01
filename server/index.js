@@ -7,7 +7,7 @@ import { seedDefaultWeek } from './seed.js';
 
 // تحميل ملف .env لو موجود (من غير مكتبات خارجية)
 try {
-  process.loadEnvFile();
+  process.loadEnvFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env'));
 } catch {
   /* مفيش .env — هنكمل بمتغيرات البيئة الحالية */
 }

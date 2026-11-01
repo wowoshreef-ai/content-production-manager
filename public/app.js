@@ -139,6 +139,15 @@ const hasScript = (e) => !!(e.script && e.script.trim());
 const hasNotes = (e) => !!(e.notes && e.notes.trim());
 const scriptFlag = (e) => `<span class="flag written" data-sflag="${e.id}"${hasScript(e) ? '' : ' hidden'}>✅ تم كتابة السكريبت</span>`;
 const noteFlag = (e) => `<span class="flag written" data-nflag="${e.id}"${hasNotes(e) && !hasScript(e) ? '' : ' hidden'}>💡 الفكرة جاهزة</span>`;
+function proofreadButton(e) {
+  const busy = state.busy.has('p' + e.id);
+  const ready = state.data?.integrations?.aiProviders?.includes('gemini');
+  const disabled = busy || !hasScript(e) || !ready;
+  const label = busy ? '⏳ جارٍ التدقيق…' : '✓ تدقيق إملائي';
+  const title = ready ? 'تصحيح الإملاء فقط مع الحفاظ على صياغة النص' : 'أضف مفتاح Gemini لتفعيل التدقيق';
+  return '<button class="btn small ghost proofread-btn" data-act="proofread" data-id="' + e.id + '" type="button" title="' + title + '" aria-label="' + title + '" ' + (disabled ? 'disabled' : '') + '>' + label + '</button>';
+}
+
 const pageIs = () => {
   const route = location.hash.replace(/^#\//, '');
   if (route === 'settings') return state.returnHash.replace(/^#\//, '') || 'today';
@@ -240,7 +249,7 @@ function weekView() {
   }
   html += dayGroup('📋 من غير يوم محدد', '', d.entries.filter((e) => e.day === null), false, false);
   if (!d.entries.length) html += '<div class="empty">مفيش مهام. ضيف مهام من الإعدادات أو أضف فيديو إضافي تحت.</div>';
-  html += `<section class="quick-add card"><div><h3>➕ فيديو إضافي للأسبوع</h3><p class="hint">يُضاف كمهمة بونص لهذا الأسبوع</p></div><select id="extraChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input type="text" id="extraTitle" class="grow" placeholder="اسم الفيديو الإضافي" maxlength="300"><button class="btn" data-act="add-extra" type="button">إضافة</button></section>`;
+  html += `<section class="quick-add card"><div><h3>➕ فيديو إضافي للأسبوع</h3><p class="hint">يُضاف كمهمة بونص لهذا الأسبوع</p></div><select id="extraChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button class="btn" data-act="add-extra" type="button">إضافة</button></section>`;
   html += '<div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>';
   return html;
 }
@@ -263,7 +272,7 @@ function todayView() {
       <div class="today-summary-body"><section class="today-metrics"><article class="metric-card metric-primary"><span>إنجاز مهام اليوم</span><strong>${done}<small> / ${entries.length}</small></strong><div class="metric-track"><i style="width:${entries.length ? Math.round(done / entries.length * 100) : 0}%"></i></div></article><article class="metric-card"><span>📤 الفيديوهات المرفوعة</span><strong>${uploaded}<small> / ${entries.filter((e) => e.is_video).length}</small></strong></article><article class="metric-card"><span>✍️ السكريبتات المكتوبة</span><strong>${scripts}<small> / ${entries.length}</small></strong></article><article class="metric-card"><span>المتبقي لهدف الأسبوع</span><strong>${d.progress.remaining}<small> فيديو</small></strong></article></section>
       <div class="today-channel-row"><span class="hint">القنوات:</span>${channels || '<span class="hint">مفيش مهام متعيّنة للقنوات النهارده</span>'}</div></div>
     </details>
-    <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="todayTitle" class="grow" type="text" maxlength="300" placeholder="اكتب فكرة أو عنوان الفيديو"><button class="btn" data-act="add-today" type="button">إضافة</button></section>
+    <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button class="btn" data-act="add-today" type="button">إضافة</button></section>
     ${dayGroup('مهام النهارده', `${entries.length} مهام · ${done} مكتملة`, entries, true, true, d.todayWeekday)}
     <div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>`;
 }
@@ -297,7 +306,7 @@ function taskCard(e) {
       ${scriptFlag(e)}
       ${noteFlag(e)}
       ${ch ? `<span class="badge" style="--c:${esc(ch.color)}">${chLabel(ch)}</span>` : ''}
-      <div class="t-title" data-act="toggle" data-id="${e.id}">${esc(e.title)}${e.chosen_title ? `<small>🎯 ${esc(e.chosen_title)}</small>` : ''}</div>
+
       ${e.is_video ? '' : '<span class="flag">مهمة عادية</span>'}
       <button class="chev" data-act="toggle" data-id="${e.id}" aria-expanded="${open}" aria-label="تفاصيل" type="button">${open ? '▴' : '▾'}</button>
     </div>
@@ -311,11 +320,7 @@ function taskBody(e) {
   const busyT = state.busy.has(`t${e.id}`);
   const chosenProvider = state.provider || d.settings.aiProvider;
   return `<div class="t-body">
-    <div class="row task-title-row">
-      <div class="grow"><label class="lbl">اسم المهمة</label>
-        <input type="text" data-id="${e.id}" data-field="title" value="${esc(e.title)}" maxlength="300"></div>
-    </div>
-    <section class="production-section script-editor-section"><div class="section-heading"><div><h4>✍️ نص السكريبت</h4><p>اكتب النص وراجعه هنا — الحفظ تلقائي</p></div><span class="section-mark">كتابة</span></div>
+    <section class="production-section script-editor-section"><div class="section-heading"><div><h4>✍️ نص السكريبت</h4><p>اكتب النص وراجعه هنا — الحفظ تلقائي</p></div><span class="section-mark">كتابة</span>${proofreadButton(e)}</div>
       <textarea class="auto script-editor" data-id="${e.id}" data-field="script" placeholder="ابدأ كتابة السكريبت هنا… المساحة تتمدد تلقائيًا مع النص">${esc(e.script)}</textarea>
     </section>
 
@@ -329,14 +334,14 @@ function taskBody(e) {
       <div class="row">
         <select data-prov style="width:auto">
           <option value="auto" ${chosenProvider === 'auto' ? 'selected' : ''}>تلقائي</option>
-          ${['anthropic', 'gemini', 'openai']
+          ${['anthropic', 'gemini', 'openai', 'openrouter']
             .filter((p) => providers.includes(p))
-            .map((p) => `<option value="${p}" ${chosenProvider === p ? 'selected' : ''}>${{ anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI' }[p]}</option>`)
+            .map((p) => `<option value="${p}" ${chosenProvider === p ? 'selected' : ''}>${{ anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter' }[p]}</option>`)
             .join('')}
         </select>
         <button class="btn small" data-act="titles" data-id="${e.id}" type="button" ${busyT ? 'disabled' : ''}>${busyT ? '⏳ بيكتب…' : e.titles.length ? '🔄 ولّد تاني' : '✨ ولّد العناوين'}</button>
       </div>
-      ${providers.length ? '' : '<p class="hint">محتاج مفتاح ذكاء اصطناعي في ملف .env (ANTHROPIC_API_KEY أو GEMINI_API_KEY أو OPENAI_API_KEY).</p>'}
+      ${providers.length ? '' : '<p class="hint">محتاج مفتاح ذكاء اصطناعي في ملف .env (ANTHROPIC_API_KEY أو GEMINI_API_KEY أو OPENAI_API_KEY أو OPENROUTER_API_KEY).</p>'}
       <div class="titles">${e.titles
         .map(
           (t, i) => `<div class="row"><button class="title-opt grow ${t === e.chosen_title ? 'picked' : ''}" data-act="pick-title" data-id="${e.id}" data-i="${i}" type="button">${t === e.chosen_title ? '✅ ' : ''}${esc(t)}</button>
@@ -361,7 +366,7 @@ function openResetModal() {
     <div class="r-icon">🔒</div>
     <h2>متأكد إنك عايز تصفّر الجدول؟</h2>
     <p class="hint">هيتمسح كل علامات "تم" والسكريبتات والعناوين بتاعت الأسبوع الحالي، والنتيجة بتتسجل. اكتب الباسورد عشان تأكد.</p>
-    <input type="password" id="resetPw" placeholder="الباسورد" autocomplete="off" dir="ltr">
+    <label class="lbl" for="resetPw">كلمة مرور التصفير</label><input type="password" id="resetPw" placeholder="الباسورد" autocomplete="off" dir="ltr">
     <p class="r-error" id="resetErr" hidden></p>
     <div class="foot"><button class="btn ghost" data-act="r-cancel" type="button">إلغاء</button><button class="btn danger" data-act="r-confirm" type="button">تأكيد المسح</button></div>
   </div></div>`;
@@ -397,12 +402,12 @@ function weekOrder() {
 
 function taskOptions() {
   const d = state.data;
-  const opt = (e) => `<option value="${e.id}">${esc(e.channel?.name ? `${e.channel.name} — ` : '')}${esc(e.title)}${e.script.trim() ? ' ✍️ (فيه سكريبت)' : ''}</option>`;
+  const opt = (e) => `<option value="${e.id}">${esc(e.channel?.name || 'بدون قناة')}${e.script.trim() ? ' ✍️ (فيه سكريبت)' : ''}</option>`;
   const groups = weekOrder()
     .map((wd) => [DAYS[wd], d.entries.filter((e) => e.day === wd)])
     .concat([['من غير يوم', d.entries.filter((e) => e.day === null)]])
     .filter(([, list]) => list.length);
-  return `<option value="">— اختار المهمة —</option>${groups.map(([name, list]) => `<optgroup label="${esc(name)}">${list.map(opt).join('')}</optgroup>`).join('')}`;
+  return `<option value="">— اختار القناة —</option>${groups.map(([name, list]) => `<optgroup label="${esc(name)}">${list.map(opt).join('')}</optgroup>`).join('')}`;
 }
 
 function scriptCard(e) {
@@ -411,11 +416,11 @@ function scriptCard(e) {
     <div class="t-head">
       ${scriptFlag(e)}
       ${ch ? `<span class="badge" style="--c:${esc(ch.color)}">${chLabel(ch)}</span>` : ''}
-      <div class="t-title">${esc(e.title)}</div>
+
       <select data-id="${e.id}" data-field="day" title="انقل المهمة ليوم تاني"><option value="">أي يوم</option>
         ${DAYS.map((n, i) => `<option value="${i}" ${e.day === i ? 'selected' : ''}>${n}</option>`).join('')}</select>
     </div>
-    <div class="t-body"><label class="script-editor-label" for="script-${e.id}">✍️ مساحة كتابة السكريبت <small>الحفظ تلقائي</small></label><textarea id="script-${e.id}" class="auto script-editor" data-id="${e.id}" data-field="script" placeholder="اكتب سكريبت «${esc(e.title)}» هنا… المساحة تتمدد تلقائيًا">${esc(e.script)}</textarea><div class="script-card-foot"><span>${hasScript(e) ? '✅ السكريبت محفوظ' : 'ابدأ الكتابة — سيظهر اكتمال السكريبت تلقائيًا'}</span><span>${esc(ch?.name || 'بدون قناة')}</span></div></div>
+    <div class="t-body"><label class="script-editor-label" for="script-${e.id}">✍️ مساحة كتابة السكريبت <small>الحفظ تلقائي</small></label><textarea id="script-${e.id}" class="auto script-editor" data-id="${e.id}" data-field="script" placeholder="اكتب سكريبت قناة «${esc(ch?.name || 'القناة')}» هنا… المساحة تتمدد تلقائيًا">${esc(e.script)}</textarea><div class="script-card-foot"><span>${hasScript(e) ? '✅ السكريبت محفوظ' : 'ابدأ الكتابة — سيظهر اكتمال السكريبت تلقائيًا'}</span><span>${esc(ch?.name || 'بدون قناة')}</span>${proofreadButton(e)}</div></div>
   </article>`;
 }
 
@@ -475,6 +480,12 @@ async function mutate(id, patch) {
 }
 
 document.addEventListener('click', (ev) => {
+  const card = ev.target.closest('.task');
+  if (!card || ev.target.closest('button, a, input, textarea, select, label, [contenteditable="true"], [data-act]')) return;
+  card.querySelector('[data-act="toggle"]')?.click();
+});
+
+document.addEventListener('click', (ev) => {
   if (ev.target.classList?.contains('modal-back')) return closeModal();
   const el = ev.target.closest('[data-act]');
   if (!el || ['done', 'uploaded'].includes(el.dataset.act)) return;
@@ -496,13 +507,14 @@ document.addEventListener('click', (ev) => {
       case 'today-add-toggle': {
         const form = $('#todayQuickAdd');
         form.hidden = !form.hidden;
-        if (!form.hidden) $('#todayTitle').focus();
+        if (!form.hidden) $('#todayChannel').focus();
         return;
       }
       case 'add-today': {
-        const title = $('#todayTitle').value.trim();
-        if (!title) return toast('اكتب فكرة الفيديو الأول', true);
-        const created = await api('/entries', { method: 'POST', body: { title, channel_id: Number($('#todayChannel').value) || null, day: state.data.todayWeekday } });
+        const channelId = Number($('#todayChannel').value) || null;
+        const title = state.data.channels.find((channel) => channel.id === channelId)?.name || '';
+        if (!title) return toast('اختار قناة الفيديو', true);
+        const created = await api('/entries', { method: 'POST', body: { title, channel_id: channelId, day: state.data.todayWeekday } });
         state.open.add(created.id);
         return load();
       }
@@ -562,17 +574,23 @@ document.addEventListener('click', (ev) => {
         state.open.delete(id);
         return load();
       case 'add-extra': {
-        const title = $('#extraTitle').value.trim();
-        if (!title) return toast('اكتب اسم الفيديو الأول', true);
+        const channelId = Number($('#extraChannel').value) || null;
+        const channel = state.data.channels.find((c) => c.id === channelId);
+        const title = channel?.name || '';
+        if (!title) return toast('اختار قناة الفيديو', true);
         const created = await api('/entries', {
           method: 'POST',
-          body: { title, channel_id: Number($('#extraChannel').value) || null, week: state.data.weekStart },
+          body: { title, channel_id: channelId, week: state.data.weekStart },
         });
         state.open.add(created.id);
         return load();
       }
       case 'titles':
         return genTitles(id);
+      case 'proofread':
+        return proofread(id);
+      case 'proofread':
+        return proofread(id);
       case 'pick-title': {
         const e = entryById(id);
         const t = e.titles[Number(el.dataset.i)];
@@ -634,7 +652,7 @@ function celebrateToday() {
   overlay.className = 'day-celebration';
   overlay.setAttribute('role', 'status');
   overlay.setAttribute('aria-live', 'polite');
-  overlay.innerHTML = `<div class="celebration-confetti" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<span style="--i:${i}">${['✦', '✧', '●', '✦', '✺'][i % 5]}</span>`).join('')}</div><div class="celebration-card"><span class="celebration-icon">🎉</span><p class="eyebrow">إنجاز اليوم اكتمل</p><h2>عاش! خلّصت مهام النهارده</h2><p>كل خطوة خلصتها قرّبتك من هدفك الأسبوعي.</p><button class="btn" type="button" data-celebrate-close>كمّل بنفس الحماس</button></div>`;
+  overlay.innerHTML = `<div class="celebration-confetti" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<span style="--x:${8 + i * 4.7}%;--hue:${i * 25};--duration:${1.6 + (i % 5) * 0.28}s;--delay:${i * 0.035}s">${['✦', '✧', '●', '✦', '✺'][i % 5]}</span>`).join('')}</div><div class="celebration-card"><span class="celebration-icon">🎉</span><p class="eyebrow">إنجاز اليوم اكتمل</p><h2>عاش! خلّصت مهام النهارده</h2><p>كل خطوة خلصتها قرّبتك من هدفك الأسبوعي.</p><button class="btn" type="button" data-celebrate-close>كمّل بنفس الحماس</button></div>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.addEventListener('click', (ev) => { if (ev.target === overlay || ev.target.closest('[data-celebrate-close]')) close(); });
@@ -740,6 +758,23 @@ async function genTitles(id) {
   }
 }
 
+async function proofread(id) {
+  const e = entryById(id);
+  if (!hasScript(e)) return toast('اكتب السكريبت الأول قبل التدقيق', true);
+  if (!state.data.integrations.aiProviders.includes('gemini')) return toast('التدقيق محتاج مفتاح Gemini على السيرفر', true);
+  state.busy.add('p' + id);
+  render();
+  try {
+    await flushAll();
+    const r = await api('/entries/' + id + '/proofread', { method: 'POST' });
+    replaceEntry(r.entry);
+    toast('✅ اتصححت الأخطاء الإملائية مع الحفاظ على صياغتك');
+  } finally {
+    state.busy.delete('p' + id);
+    render();
+  }
+}
+
 // ───────────── الإشعارات ─────────────
 const b64ToU8 = (s) => {
   const pad = '='.repeat((4 - (s.length % 4)) % 4);
@@ -838,7 +873,7 @@ function renderModal() {
   const taskRow = ({ task: t, index: i, order }) => `<article class="template-task-row" data-tk="${i}">
     <span class="template-task-order">${String(order).padStart(2, '0')}</span>
     <div class="template-task-fields">
-      <input type="text" data-k="title" value="${esc(t.title)}" placeholder="اسم المهمة أو الفيديو" maxlength="300" aria-label="اسم المهمة">
+      <input type="hidden" data-k="title" value="${esc(t.title)}"><span class="template-task-channel">${esc(m.channels.find((c) => c.id === t.channel_id)?.name || 'من غير قناة')}</span>
       <div class="template-task-controls">
         <select data-k="channel" aria-label="القناة">${chOpts(t.channel_id)}</select>
         <select data-k="day" aria-label="نقل إلى يوم">${dayOpts(t.day)}</select>
@@ -858,7 +893,7 @@ function renderModal() {
   };
   $('#modalRoot').innerHTML = `<div class="modal-back settings-page"><div class="modal settings-sheet" role="dialog" aria-modal="true" aria-label="الإعدادات">
     <div class="settings-intro"><span class="eyebrow">تخصيص مساحة العمل</span><h2>إعدادات منصة الإنتاج والقنوات</h2><p class="hint">ضبط أهداف الأسبوع، أسلوب القنوات، وأدوات إنتاج المحتوى.</p></div>
-    <div class="settings-kpis"><article><span>الهدف الأسبوعي</span><strong>${s.weeklyTarget} فيديو</strong></article><article><span>أيام العمل</span><strong>${s.workDays.length} أيام</strong></article><article><span>القنوات النشطة</span><strong>${m.channels.length} قنوات</strong></article><article><span>محرّك الذكاء الاصطناعي</span><strong>${{ auto: 'تلقائي', anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI' }[s.aiProvider] || 'تلقائي'}</strong></article></div>
+    <div class="settings-kpis"><article><span>الهدف الأسبوعي</span><strong>${s.weeklyTarget} فيديو</strong></article><article><span>أيام العمل</span><strong>${s.workDays.length} أيام</strong></article><article><span>القنوات النشطة</span><strong>${m.channels.length} قنوات</strong></article><article><span>محرّك الذكاء الاصطناعي</span><strong>${{ auto: 'تلقائي', anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter' }[s.aiProvider] || 'تلقائي'}</strong></article></div>
 
     <section><h3>🎯 هدف الأسبوع والجدول الزمني</h3>
       <div class="row">
@@ -890,7 +925,7 @@ function renderModal() {
           (c, i) => `<article class="channel-edit-card" data-ch="${i}">
             <div class="channel-edit-head"><input type="text" data-k="icon" class="icon-in" value="${esc(c.icon || '')}" placeholder="😀" maxlength="8" title="أيقونة القناة (إيموجي)"><input type="text" data-k="name" value="${esc(c.name)}" placeholder="اسم القناة" maxlength="60"><input type="color" data-k="color" value="${esc(c.color)}"><button class="btn small danger" data-act="m-del-ch" data-i="${i}" type="button">حذف</button></div>
             <label class="lbl">أسلوب وهوية القناة<textarea class="auto short" data-k="style" placeholder="وصف نبرة القناة وهويتها البصرية، ويُستخدم في العناوين والصور">${esc(c.style)}</textarea></label>
-            <div class="channel-prompt-grid"><label class="lbl">📝 برومبت عناوين الفيديو<textarea class="auto short" data-k="title_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وعدد العناوين تُضاف تلقائيًا.">${esc(c.title_prompt || '')}</textarea></label><label class="lbl">🖼️ برومبت الصور المصغرة<textarea class="auto short" data-k="image_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وأسلوب القناة يُضافان تلقائيًا.">${esc(c.image_prompt || '')}</textarea></label></div>
+            <details class="channel-prompts"><summary>برومبتات الذكاء الاصطناعي <small>اختياري</small></summary><div class="channel-prompt-grid"><label class="lbl">📝 برومبت عناوين الفيديو<textarea class="auto short" data-k="title_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وعدد العناوين تُضاف تلقائيًا.">${esc(c.title_prompt || '')}</textarea></label><label class="lbl">🖼️ برومبت الصور المصغرة<textarea class="auto short" data-k="image_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وأسلوب القناة يُضافان تلقائيًا.">${esc(c.image_prompt || '')}</textarea></label></div></details>
           </article>`,
         )
         .join('')}</div>
@@ -905,7 +940,7 @@ function renderModal() {
     <section><h3>🤖 الذكاء الاصطناعي والمنصات</h3>
       <div class="row">
         <div><label class="lbl">مزوّد العناوين</label><select id="s_ai" style="width:auto">
-          ${['auto', 'anthropic', 'gemini', 'openai'].map((p) => `<option value="${p}" ${s.aiProvider === p ? 'selected' : ''}>${{ auto: 'تلقائي', anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI' }[p]}</option>`).join('')}</select></div>
+          ${['auto', 'anthropic', 'gemini', 'openai', 'openrouter'].map((p) => { const available = p === 'auto' || state.data.integrations.aiProviders.includes(p); const names = { auto: 'تلقائي', anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter' }; return `<option value="${p}" ${s.aiProvider === p ? 'selected' : ''} ${available ? '' : 'disabled'}>${names[p]}${available ? '' : ' (المفتاح غير مضاف)'}</option>`; }).join('')}</select></div>
         <div><label class="lbl">أبعاد الصورة المصغرة</label><select id="s_aspect" style="width:auto">
           ${['16:9', '9:16', '1:1', '4:3'].map((a) => `<option ${s.thumbAspect === a ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
         <div class="grow"><label class="lbl">المنصات (مفصولة بفاصلة)</label><input type="text" id="s_platforms" value="${esc(s.platforms.join('، '))}"></div>
@@ -915,7 +950,7 @@ function renderModal() {
 
     <section class="danger-zone"><h3>🔒 تصفير الأسبوع الحالي</h3>
       <p class="hint">بيمسح علامات "تم" والسكريبتات والعناوين بتاعت الأسبوع الحالي ويبدأه من الأول. النتيجة بتتسجل في السجل.</p>
-      <div class="row"><input type="password" id="s_resetpw" placeholder="كلمة السر" class="grow" autocomplete="off">
+      <label class="lbl" for="s_resetpw">كلمة مرور التصفير</label><div class="row"><input type="password" id="s_resetpw" placeholder="كلمة السر" class="grow" autocomplete="off">
         <button class="btn small danger" data-act="m-reset" type="button">تصفير</button></div>
     </section>
 
@@ -950,7 +985,7 @@ function readModal() {
   m.tasks.forEach((t, i) => {
     const row = $(`[data-tk="${i}"]`, root);
     t.channel_id = $('[data-k=channel]', row).value === '' ? null : Number($('[data-k=channel]', row).value);
-    t.title = $('[data-k=title]', row).value;
+    t.title = m.channels.find((c) => c.id === t.channel_id)?.name || '';
     t.day = $('[data-k=day]', row).value === '' ? null : Number($('[data-k=day]', row).value);
     t.is_video = $('[data-k=video]', row).checked;
   });
@@ -998,10 +1033,10 @@ async function modalAction(act, el) {
   }
   if (act === 'm-add-task') {
     const day = el.dataset.day === 'none' || el.dataset.day === undefined ? null : Number(el.dataset.day);
-    m.tasks.push({ title: '', channel_id: m.channels[0]?.id ?? null, day, is_video: true });
+    m.tasks.push({ title: m.channels[0]?.name || '', channel_id: m.channels[0]?.id ?? null, day, is_video: true });
     const newIndex = m.tasks.length - 1;
     renderModal();
-    return $(`[data-tk="${newIndex}"] [data-k="title"]`, $('#modalRoot'))?.focus();
+    return $(`[data-tk="${newIndex}"] [data-k="channel"]`, $('#modalRoot'))?.focus();
   }
   if (act === 'm-del-task') {
     m.tasks.splice(i, 1);
@@ -1023,7 +1058,7 @@ async function modalAction(act, el) {
 async function saveSettings() {
   const m = state.modal;
   if (m.channels.some((c) => !c.name.trim())) return toast('كل قناة لازم يكون ليها اسم', true);
-  if (m.tasks.some((t) => !t.title.trim())) return toast('كل مهمة لازم يكون ليها اسم', true);
+  if (m.tasks.some((t) => !t.channel_id || !m.channels.some((c) => c.id === t.channel_id && c.name.trim()))) return toast('اختار قناة لكل مهمة', true);
   if (m.settings.weekStartDay !== state.data.settings.weekStartDay) {
     if (!confirm('تغيير يوم بداية الأسبوع هيبدأ أسبوع جديد بحدود جديدة. متأكد؟')) return;
   }

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "مدير إنتاج المحتوى",
+  "version": "1.0.0",
+  "description": "افتح لوحة إدارة إنتاج المحتوى مباشرة من شريط Chrome.",
+  "action": {
+    "default_title": "مدير إنتاج المحتوى",
+    "default_popup": "popup.html"
+  }
+}

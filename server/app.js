@@ -6,7 +6,7 @@ import express from 'express';
 import { AppError, bad, notFound } from './errors.js';
 import { isDateStr, monthRange, weekStartFor, zonedParts, addDays } from './dates.js';
 import { computeProgress } from './progress.js';
-import { configuredProviders, generateImage, generateTitles, pickProvider } from './ai.js';
+import { configuredProviders, generateImage, generateTitles, pickProvider, proofreadScript } from './ai.js';
 import { createPush } from './push.js';
 import { runReminderCheck } from './scheduler.js';
 import * as store from './store.js';
@@ -198,6 +198,17 @@ export function createApp({ db, env = process.env, dataDir, now = () => new Date
     const titles = await generateTitles({ env, provider, channel: entry.channel, entry, count, fetchImpl });
     store.saveTitles(db, entry.id, titles);
     res.json({ provider, titles, entry: store.getEntry(db, entry.id) });
+  });
+
+  // ─ التدقيق الإملائي للسكريبت عبر Gemini
+  api.post('/entries/:id/proofread', async (req, res) => {
+    const id = idParam(req);
+    const entry = store.getEntry(db, id);
+    if (!entry) throw notFound('المهمة مش موجودة');
+    const corrected = await proofreadScript({ env, script: entry.script, fetchImpl });
+    const updated = store.patchEntry(db, id, { script: corrected });
+    if (!updated) throw notFound('المهمة مش موجودة');
+    res.json({ script: corrected, entry: store.getEntry(db, id) });
   });
 
   // ─ الذكاء الاصطناعي: الصورة المصغرة

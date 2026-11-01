@@ -11,7 +11,7 @@
   --inset: #0d2144;
   --line: #24427a;
   --text: #eaf0fb;
-  --muted: #95add4;
+  --muted: #b7c9e4;
   --accent: #5b9bff;
   --on-accent: #04122b;
   --ok: #34d399;
@@ -37,4 +37,40 @@
   --ring-bg: #1d3868;
   --radius: 16px;
   --font: "IBM Plex Sans", "Cairo", "Segoe UI", Tahoma, system-ui, sans-serif;
+}
+
+
+/* الباليت المعتمدة: داكنة ومريحة للعين. */
+:root {
+  --bg: #0d1020;
+  --canvas: #111527;
+  --card: #161a2c;
+  --card-2: #20253b;
+  --inset: #121628;
+  --line: #303650;
+  --text: #e8eaf3;
+  --muted: #a9adc0;
+  --accent: #8c9deb;
+  --on-accent: #101427;
+  --ok: #68b797;
+  --on-ok: #071b15;
+  --danger: #d97d8a;
+  --on-danger: #260d12;
+  --today: #bac5ff;
+  --today-bg: #1c2138;
+  --today-line: #353d5a;
+  --on-today: #e8eaf3;
+  --ok-bg: #1a302a;
+  --ok-text: #91d4b6;
+  --up-bg: #232943;
+  --up-text: #c1c8f2;
+  --done-bg: #1a302a;
+  --done-line: #3c6c58;
+  --bonus-bg: #292742;
+  --bonus-text: #c0b5e5;
+  --warn-bg: #382f22;
+  --warn-line: #6a573a;
+  --warn-text: #e8c78b;
+  --overlay: #080a16cc;
+  --ring-bg: #262d49;
 }
