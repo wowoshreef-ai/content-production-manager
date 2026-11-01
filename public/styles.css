@@ -546,14 +546,6 @@ input:focus,select:focus,textarea:focus { outline:2px solid var(--accent); outli
 
 .today-summary { margin: 4px 0 10px; }
 .today-summary[open] > summary { color: var(--text); }
-.week-summary { margin: 0 0 18px; border: 1px solid var(--line); border-radius: 13px; background: linear-gradient(120deg, rgba(18,41,79,.7), rgba(13,31,60,.75)); }
-.week-summary > summary { display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; list-style:none; color:var(--text); font-weight:750; }
-.week-summary > summary::-webkit-details-marker { display:none; }
-.week-summary > summary::after { content:"＋"; display:grid; place-items:center; width:24px; height:24px; margin-inline-start:auto; border-radius:7px; background:var(--card-2); color:var(--accent); }
-.week-summary[open] > summary::after { content:"−"; }
-.week-summary-body { padding:0 10px 10px; border-top:1px solid rgba(36,66,122,.55); }
-.week-summary #progress { margin:10px 0 0; }
-
 .day-celebration { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; overflow:hidden; padding:20px; background:rgba(4,13,29,.72); backdrop-filter:blur(8px); animation:celebration-fade .25s ease-out both; }
 .celebration-card { position:relative; z-index:1; width:min(440px,100%); padding:30px 24px; border:1px solid rgba(112,168,255,.38); border-radius:22px; background:linear-gradient(145deg,#162f58,#0c1c37); box-shadow:0 24px 90px rgba(0,0,0,.42),0 0 48px rgba(91,155,255,.18); text-align:center; animation:celebration-pop .5s cubic-bezier(.2,.9,.25,1.3) both; }
 .celebration-card h2 { margin:8px 0; font-size:clamp(1.35rem,5vw,1.8rem); }

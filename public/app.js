@@ -155,7 +155,7 @@ function render() {
   let dismissed = false;
   try { dismissed = localStorage.getItem('demoDismissed') === '1'; } catch { /* التخزين مش متاح */ }
   $('#demoBanner').hidden = !(d.demo && !dismissed && (page === 'today' || page === 'week'));
-  $('#progress').hidden = !['today', 'week'].includes(page);
+  $('#progress').hidden = page !== 'week';
   $$('#pageNav [data-route]').forEach((a) => {
     const active = a.dataset.route === page;
     a.classList.toggle('active', active);
@@ -164,15 +164,8 @@ function render() {
   const titles = { today: 'النهارده', week: 'الأسبوع', history: 'السجل والتحليلات', scripts: 'السكريبتات' };
   document.title = `${titles[page]} — مدير إنتاج المحتوى`;
   const keep = { t: $('#bankTitle')?.value, b: $('#bankBody')?.value };
-  const progress = $('#progress');
-  const main = document.querySelector('main');
-  if (progress.parentElement !== main) main.insertBefore(progress, $('#view'));
   if (!$('#progress').hidden) renderProgress();
   $('#view').innerHTML = ({ today: todayView, week: weekView, history: historyView, scripts: scriptsView })[page]();
-  if (page === 'today') {
-    const mount = $('#todayWeeklySummary');
-    if (mount) mount.append(progress);
-  }
   if (keep.t && $('#bankTitle')) $('#bankTitle').value = keep.t;
   if (keep.b && $('#bankBody')) $('#bankBody').value = keep.b;
   restoreFocus(snap);
@@ -270,7 +263,6 @@ function todayView() {
       <div class="today-summary-body"><section class="today-metrics"><article class="metric-card metric-primary"><span>إنجاز مهام اليوم</span><strong>${done}<small> / ${entries.length}</small></strong><div class="metric-track"><i style="width:${entries.length ? Math.round(done / entries.length * 100) : 0}%"></i></div></article><article class="metric-card"><span>📤 الفيديوهات المرفوعة</span><strong>${uploaded}<small> / ${entries.filter((e) => e.is_video).length}</small></strong></article><article class="metric-card"><span>✍️ السكريبتات المكتوبة</span><strong>${scripts}<small> / ${entries.length}</small></strong></article><article class="metric-card"><span>المتبقي لهدف الأسبوع</span><strong>${d.progress.remaining}<small> فيديو</small></strong></article></section>
       <div class="today-channel-row"><span class="hint">القنوات:</span>${channels || '<span class="hint">مفيش مهام متعيّنة للقنوات النهارده</span>'}</div></div>
     </details>
-    <details class="week-summary"><summary><span>ملخص الأسبوع</span><span class="summary-count">${d.progress.done} من ${d.progress.target} فيديو · ${d.progress.percent}%</span></summary><div class="week-summary-body" id="todayWeeklySummary"></div></details>
     <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="todayTitle" class="grow" type="text" maxlength="300" placeholder="اكتب فكرة أو عنوان الفيديو"><button class="btn" data-act="add-today" type="button">إضافة</button></section>
     ${dayGroup('مهام النهارده', `${entries.length} مهام · ${done} مكتملة`, entries, true, true, d.todayWeekday)}
     <div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>`;
