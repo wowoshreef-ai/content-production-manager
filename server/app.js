@@ -83,6 +83,7 @@ export function createApp({ db, env = process.env, dataDir, now = () => new Date
       isCurrentWeek: weekStart === c.currentWeekStart,
       settings: c.settings,
       channels: store.listChannels(db),
+      template: store.listTemplate(db),
       entries,
       progress: computeProgress(entries, target),
       demo: !!store.getMeta(db, 'demo'),
@@ -102,6 +103,10 @@ export function createApp({ db, env = process.env, dataDir, now = () => new Date
     const c = ctx();
     const settings = store.updateSettings(db, req.body, c.currentWeekStart);
     res.json(settings);
+  });
+  api.put('/workspace', (req, res) => {
+    const c = ctx();
+    res.json(store.saveWorkspace(db, req.body ?? {}, c.currentWeekStart));
   });
 
   // ─ القنوات

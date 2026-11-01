@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS channels (
   color TEXT NOT NULL DEFAULT '#4f8cff',
   icon TEXT NOT NULL DEFAULT '',
   style TEXT NOT NULL DEFAULT '',
+  title_prompt TEXT NOT NULL DEFAULT '',
+  image_prompt TEXT NOT NULL DEFAULT '',
   position INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS template_tasks (
@@ -81,30 +83,71 @@ CREATE TABLE IF NOT EXISTS reset_log (
   target INTEGER NOT NULL,
   at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
 `;
+
+const MIGRATIONS = [
+  {
+    version: 1,
+    name: 'script-ready-flag',
+    apply(db) {
+      const columns = db.prepare('PRAGMA table_info(entries)').all().map((column) => column.name);
+      if (!columns.includes('script_ready')) db.exec('ALTER TABLE entries ADD COLUMN script_ready INTEGER NOT NULL DEFAULT 0');
+    },
+  },
+  {
+    version: 2,
+    name: 'channel-prompts-and-icon',
+    apply(db) {
+      const columns = new Set(db.prepare('PRAGMA table_info(channels)').all().map((column) => column.name));
+      if (!columns.has('icon')) db.exec("ALTER TABLE channels ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+      if (!columns.has('title_prompt')) db.exec("ALTER TABLE channels ADD COLUMN title_prompt TEXT NOT NULL DEFAULT ''");
+      if (!columns.has('image_prompt')) db.exec("ALTER TABLE channels ADD COLUMN image_prompt TEXT NOT NULL DEFAULT ''");
+    },
+  },
+];
 
 export function openDb(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
-  // ترقية قواعد البيانات القديمة (قبل إضافة "السكريبت جاهز")
-  const cols = db.prepare('PRAGMA table_info(entries)').all().map((c) => c.name);
-  if (!cols.includes('script_ready')) db.exec('ALTER TABLE entries ADD COLUMN script_ready INTEGER NOT NULL DEFAULT 0');
-  const chCols = db.prepare('PRAGMA table_info(channels)').all().map((c) => c.name);
-  if (!chCols.includes('icon')) db.exec("ALTER TABLE channels ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+  for (const migration of MIGRATIONS) {
+    const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(migration.version);
+    if (applied) continue;
+    tx(db, () => {
+      migration.apply(db);
+      db.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES(?, ?, ?)').run(
+        migration.version,
+        migration.name,
+        new Date().toISOString(),
+      );
+    });
+  }
   return db;
 }
 
+const transactionDepth = new WeakMap();
+
 export function tx(db, fn) {
-  db.exec('BEGIN');
+  const depth = transactionDepth.get(db) ?? 0;
+  const savepoint = `nested_${depth}`;
+  db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
+  transactionDepth.set(db, depth + 1);
   try {
-    const r = fn();
-    db.exec('COMMIT');
-    return r;
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+    const result = fn();
+    db.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
+    return result;
+  } catch (error) {
+    db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}`);
+    throw error;
+  } finally {
+    if (depth === 0) transactionDepth.delete(db);
+    else transactionDepth.set(db, depth);
   }
 }
 
@@ -194,12 +237,65 @@ export function updateSettings(db, patch, currentWeekStart) {
   return getSettings(db);
 }
 
+/** Saves settings, channel prompts, and the weekly template as one local transaction. */
+export function saveWorkspace(db, { settings, channels, tasks, deletedChannels = [] }, currentWeekStart) {
+  if (
+    !Array.isArray(channels) ||
+    channels.length > 50 ||
+    !channels.every((channel) => channel && typeof channel === 'object') ||
+    !Array.isArray(tasks) ||
+    tasks.length > 200 ||
+    !tasks.every((task) => task && typeof task === 'object')
+  ) {
+    throw bad('بيانات مساحة العمل مش صح');
+  }
+  if (!Array.isArray(deletedChannels) || !deletedChannels.every((id) => Number.isInteger(id) && id > 0)) {
+    throw bad('قائمة القنوات المحذوفة مش صح');
+  }
+
+  return tx(db, () => {
+    const ids = new Map();
+    const deleted = new Set(deletedChannels);
+    for (const channel of channels) {
+      if (ids.has(channel.id)) throw bad('القناة مكررة في بيانات الإعدادات');
+      const body = {
+        name: channel.name,
+        color: channel.color,
+        style: channel.style,
+        icon: channel.icon ?? '',
+        title_prompt: channel.title_prompt ?? '',
+        image_prompt: channel.image_prompt ?? '',
+      };
+      if (Number.isInteger(channel.id) && channel.id > 0) {
+        if (!updateChannel(db, channel.id, body)) throw bad('قناة من القائمة مش موجودة');
+        ids.set(channel.id, channel.id);
+      } else if (Number.isInteger(channel.id) && channel.id < 0) {
+        ids.set(channel.id, createChannel(db, body).id);
+      } else {
+        throw bad('معرّف القناة مش صح');
+      }
+      if (deleted.has(channel.id)) throw bad('القناة لا يمكن تعديلها وحذفها في نفس الوقت');
+    }
+
+    const mappedTasks = tasks.map((task) => ({
+      ...task,
+      channel_id: task.channel_id == null ? null : ids.get(task.channel_id) ?? task.channel_id,
+    }));
+    const savedSettings = updateSettings(db, settings, currentWeekStart);
+    for (const id of deletedChannels) {
+      if (!deleteChannel(db, id)) throw bad('قناة محددة للحذف مش موجودة');
+    }
+    replaceTemplate(db, mappedTasks, currentWeekStart, savedSettings.weeklyTarget);
+    return { settings: savedSettings, channels: listChannels(db), tasks: listTemplate(db) };
+  });
+}
+
 // ───────────── القنوات ─────────────
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 export function listChannels(db) {
-  return db.prepare('SELECT id, name, color, icon, style, position FROM channels ORDER BY position, id').all().map((c) => ({ ...c }));
+  return db.prepare('SELECT id, name, color, icon, style, title_prompt, image_prompt, position FROM channels ORDER BY position, id').all().map((c) => ({ ...c }));
 }
 
 const cleanIcon = (v) => {
@@ -207,17 +303,18 @@ const cleanIcon = (v) => {
   return v.trim();
 };
 
-export function createChannel(db, { name, color = '#4f8cff', style = '', icon = '' }) {
+export function createChannel(db, { name, color = '#4f8cff', style = '', icon = '', title_prompt = '', image_prompt = '' }) {
   if (typeof name !== 'string' || !name.trim() || name.length > 60) throw bad('اسم القناة مطلوب (60 حرف بحد أقصى)');
   if (!COLOR_RE.test(color)) throw bad('اللون لازم يكون بصيغة #RRGGBB');
   if (typeof style !== 'string' || style.length > 1000) throw bad('وصف أسلوب القناة طويل أوي');
+  if (typeof title_prompt !== 'string' || title_prompt.length > 5000 || typeof image_prompt !== 'string' || image_prompt.length > 5000) throw bad('برومبت القناة طويل أوي');
   const pos = num(db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM channels').get().p);
-  const r = db.prepare('INSERT INTO channels(name, color, icon, style, position) VALUES(?, ?, ?, ?, ?)').run(name.trim(), color, cleanIcon(icon), style, pos);
+  const r = db.prepare('INSERT INTO channels(name, color, icon, style, title_prompt, image_prompt, position) VALUES(?, ?, ?, ?, ?, ?, ?)').run(name.trim(), color, cleanIcon(icon), style, title_prompt, image_prompt, pos);
   return getChannel(db, num(r.lastInsertRowid));
 }
 
 export function getChannel(db, id) {
-  const c = db.prepare('SELECT id, name, color, icon, style, position FROM channels WHERE id = ?').get(id);
+  const c = db.prepare('SELECT id, name, color, icon, style, title_prompt, image_prompt, position FROM channels WHERE id = ?').get(id);
   return c ? { ...c } : null;
 }
 
@@ -237,8 +334,14 @@ export function updateChannel(db, id, patch) {
     if (typeof patch.style !== 'string' || patch.style.length > 1000) throw bad('وصف أسلوب القناة طويل أوي');
     next.style = patch.style;
   }
+  for (const key of ['title_prompt', 'image_prompt']) {
+    if (key in patch) {
+      if (typeof patch[key] !== 'string' || patch[key].length > 5000) throw bad('برومبت القناة طويل أوي');
+      next[key] = patch[key];
+    }
+  }
   if ('icon' in patch) next.icon = cleanIcon(patch.icon);
-  db.prepare('UPDATE channels SET name = ?, color = ?, icon = ?, style = ? WHERE id = ?').run(next.name, next.color, next.icon, next.style, id);
+  db.prepare('UPDATE channels SET name = ?, color = ?, icon = ?, style = ?, title_prompt = ?, image_prompt = ? WHERE id = ?').run(next.name, next.color, next.icon, next.style, next.title_prompt, next.image_prompt, id);
   return next;
 }
 

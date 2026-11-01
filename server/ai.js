@@ -100,6 +100,19 @@ export async function callText({ env, provider, prompt, fetchImpl = fetch }) {
 
 export function buildTitlesPrompt({ channel, entry, count }) {
   const script = (entry.script || '').trim().slice(0, 4000);
+  if (channel?.title_prompt?.trim()) {
+    return [
+      channel.title_prompt.trim(),
+      '',
+      'بيانات الفيديو:',
+      channel.name ? `القناة: ${channel.name}` : '',
+      channel.style ? `أسلوب القناة: ${channel.style}` : '',
+      `فكرة الفيديو: ${entry.title}`,
+      script ? `سكريبت الفيديو:\n${script}` : 'مفيش سكريبت لسه — اكتب بناءً على فكرة الفيديو بس.',
+      `المطلوب: ${count} عناوين مختلفة.`,
+      'رجّع الرد كـ JSON Array من النصوص بس، من غير أي كلام تاني.',
+    ].filter(Boolean).join('\n');
+  }
   return [
     'إنت كاتب عناوين محترف لفيديوهات قصيرة (Reels / TikTok / Shorts) بالعربي المصري.',
     channel?.name ? `القناة: ${channel.name}` : '',
@@ -160,6 +173,16 @@ export function buildThumbnailPrompt({ title, channel, script }) {
   const t = (title || '').trim();
   const headline = t.length > 40 ? `${t.slice(0, 40).trim()}…` : t;
   const topic = (script || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+  if (channel?.image_prompt?.trim()) {
+    return [
+      channel.image_prompt.trim(),
+      `Topic: ${t || 'general'}.`,
+      topic ? `Context: ${topic}` : '',
+      headline ? `Arabic headline text (right-to-left, correct spelling): "${headline}".` : '',
+      channel?.name ? `Arabic channel: ${channel.name}.` : '',
+      channel?.style ? `Brand style notes: ${channel.style}` : '',
+    ].filter(Boolean).join(' ');
+  }
   return [
     `Eye-catching social video thumbnail${channel?.name ? ` for the Arabic channel "${channel.name}"` : ''}.`,
     `Topic: ${t || 'general'}.`,

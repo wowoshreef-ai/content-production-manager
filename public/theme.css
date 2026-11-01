@@ -4,45 +4,37 @@
    ─────────────────────────────────────────────── */
 :root {
   color-scheme: dark;
-
-  /* الخلفيات: رمادي مزرق هادي (مش أسود صريح عشان ميتعبش العين) */
-  --bg: #16191f;
-  --card: #1e222a;
-  --card-2: #252a33;
-  --inset: #13161b;
-  --line: #323845;
-
-  /* النصوص: أبيض مكسور مش أبيض ناصع */
-  --text: #dde1e8;
-  --muted: #8f98a8;
-
-  /* الألوان */
-  --accent: #8aa7cf;     /* أزرق هادي للأزرار والتحديد */
-  --on-accent: #14202f;
-  --ok: #78c4a0;         /* أخضر هادي للإنجاز */
-  --on-ok: #0f2a1f;
-  --danger: #d98a84;
-  --on-danger: #2c1311;
-  --today: #d9b872;      /* لون تحديد اليوم الحالي (دافي، مختلف عن الأزرق) */
-  --today-bg: #25221a;
-  --today-line: #4a4128;
-  --on-today: #2b2209;
-
-  /* ألوان الحالات */
-  --ok-bg: #1d332a;
-  --ok-text: #9bd9bb;
-  --up-bg: #222f40;
-  --up-text: #a9c3e6;
-  --done-bg: #1a2a24;     /* يوم اكتملت كل مهامه */
-  --done-line: #2f5443;
-  --bonus-bg: #34304a;
-  --bonus-text: #c9bfe8;
-  --warn-bg: #332c1a;
-  --warn-line: #5d4e24;
-  --warn-text: #e8d29a;
-  --overlay: #0b0d11cc;
-
-  --ring-bg: #2d3440;
-  --radius: 14px;
-  --font: "Cairo", "Segoe UI", Tahoma, system-ui, sans-serif;
+  --bg: #03132c;
+  --canvas: #0a1a33;
+  --card: #12294f;
+  --card-2: #183461;
+  --inset: #0d2144;
+  --line: #24427a;
+  --text: #eaf0fb;
+  --muted: #95add4;
+  --accent: #5b9bff;
+  --on-accent: #04122b;
+  --ok: #34d399;
+  --on-ok: #03281b;
+  --danger: #f87171;
+  --on-danger: #2a0707;
+  --today: #aac7ff;
+  --today-bg: #0f2347;
+  --today-line: #24427a;
+  --on-today: #04122b;
+  --ok-bg: #0f3d2e;
+  --ok-text: #7ee8bf;
+  --up-bg: #172d52;
+  --up-text: #aac7ff;
+  --done-bg: #0f3d2e;
+  --done-line: #176b50;
+  --bonus-bg: #34265a;
+  --bonus-text: #c5a8ff;
+  --warn-bg: #4a3814;
+  --warn-line: #86641c;
+  --warn-text: #fbbf24;
+  --overlay: #020a1acc;
+  --ring-bg: #1d3868;
+  --radius: 16px;
+  --font: "IBM Plex Sans", "Cairo", "Segoe UI", Tahoma, system-ui, sans-serif;
 }

@@ -1,3 +1,5 @@
+import { createApiClient } from './api-client.js';
+
 'use strict';
 
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
@@ -9,6 +11,9 @@ const state = {
   busy: new Set(),
   provider: '', // مزوّد الذكاء الاصطناعي المختار للعناوين
   modal: null,
+  history: null,
+  viewWeek: null,
+  returnHash: '#/today',
 };
 
 // ───────────── أدوات عامة ─────────────
@@ -32,29 +37,7 @@ function setOnline(on) {
   if (t) t.textContent = on ? 'أونلاين' : 'مفيش اتصال';
 }
 
-async function api(path, { method = 'GET', body, keepalive } = {}) {
-  let res;
-  try {
-    res = await fetch(`/api${path}`, {
-      method,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      keepalive,
-    });
-  } catch {
-    setOnline(false);
-    throw new Error('مفيش اتصال بالسيرفر');
-  }
-  setOnline(true);
-  let json = null;
-  try {
-    json = await res.json();
-  } catch {
-    /* مفيش body */
-  }
-  if (!res.ok) throw new Error(json?.error || `حصل خطأ (${res.status})`);
-  return json;
-}
+const api = createApiClient({ onConnectionChange: setOnline });
 
 function addDaysStr(s, n) {
   const d = new Date(`${s}T00:00:00Z`);
@@ -75,7 +58,7 @@ function autosize(el) {
   el.style.height = 'auto';
   el.style.height = `${el.scrollHeight + 2}px`;
 }
-const autosizeAll = () => $$('textarea.auto').forEach(autosize);
+const autosizeAll = (root = document) => $$('textarea.auto', root).forEach(autosize);
 
 function linksFrom(text) {
   return (String(text).match(/https?:\/\/[^\s<>"']+/g) || []).map((u) => u.replace(/[.,;:!?)\]،؛]+$/, ''));
@@ -122,8 +105,12 @@ const flushAll = (keepalive = false) => Promise.all([...pending.keys()].map((k) 
 // ───────────── تحميل الحالة ─────────────
 async function load() {
   await flushAll();
-  state.data = await api('/state');
-  state.bank = await api('/bank');
+  const query = state.viewWeek ? `?week=${encodeURIComponent(state.viewWeek)}` : '';
+  const data = await api(`/state${query}`);
+  const [bank, history] = await Promise.all([api('/bank'), api('/history')]);
+  state.data = data;
+  state.bank = bank;
+  state.history = history;
   render();
 }
 
@@ -151,32 +138,34 @@ const chLabel = (c) => `${c.icon ? `${esc(c.icon)} ` : ''}${esc(c.name)}`;
 const hasScript = (e) => !!(e.script && e.script.trim());
 const hasNotes = (e) => !!(e.notes && e.notes.trim());
 const scriptFlag = (e) => `<span class="flag written" data-sflag="${e.id}"${hasScript(e) ? '' : ' hidden'}>✅ تم كتابة السكريبت</span>`;
-const noteFlag = (e) => `<span class="flag written" data-nflag="${e.id}"${hasNotes(e) ? '' : ' hidden'}>✅ تمت كتابة ملاحظة</span>`;
-const pageIs = () => (location.hash === '#/scripts' ? 'scripts' : 'week');
+const noteFlag = (e) => `<span class="flag written" data-nflag="${e.id}"${hasNotes(e) && !hasScript(e) ? '' : ' hidden'}>💡 الفكرة جاهزة</span>`;
+const pageIs = () => {
+  const route = location.hash.replace(/^#\//, '');
+  if (route === 'settings') return state.returnHash.replace(/^#\//, '') || 'today';
+  return ['today', 'week', 'history', 'scripts'].includes(route) ? route : 'today';
+};
 
 function render() {
   const d = state.data;
   if (!d) return;
   const snap = captureFocus();
+  const page = pageIs();
   $('#subtitle').textContent = d.channels.length ? d.channels.map((c) => c.name).join(' · ') : 'ضيف قنواتك من الإعدادات';
+  $('#headerWeekLabel').textContent = `الأسبوع · ${fmtRange(d.weekStart)}`;
   let dismissed = false;
-  try {
-    dismissed = localStorage.getItem('demoDismissed') === '1';
-  } catch {
-    /* التخزين مش متاح */
-  }
-  $('#demoBanner').hidden = !(d.demo && !dismissed);
-  const scripts = pageIs() === 'scripts';
-  $('#progress').hidden = scripts;
-  const nav = $('#navLink');
-  if (nav) {
-    nav.textContent = scripts ? '📅 جدول الأسبوع' : '✍️ السكريبتات';
-    nav.setAttribute('href', scripts ? '#/' : '#/scripts');
-  }
-  document.title = scripts ? 'السكريبتات — مدير إنتاج المحتوى' : 'مدير إنتاج المحتوى';
+  try { dismissed = localStorage.getItem('demoDismissed') === '1'; } catch { /* التخزين مش متاح */ }
+  $('#demoBanner').hidden = !(d.demo && !dismissed && (page === 'today' || page === 'week'));
+  $('#progress').hidden = !['today', 'week'].includes(page);
+  $$('#pageNav [data-route]').forEach((a) => {
+    const active = a.dataset.route === page;
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  const titles = { today: 'النهارده', week: 'الأسبوع', history: 'السجل والتحليلات', scripts: 'السكريبتات' };
+  document.title = `${titles[page]} — مدير إنتاج المحتوى`;
   const keep = { t: $('#bankTitle')?.value, b: $('#bankBody')?.value };
-  if (!scripts) renderProgress();
-  $('#view').innerHTML = scripts ? scriptsView() : weekView();
+  if (!$('#progress').hidden) renderProgress();
+  $('#view').innerHTML = ({ today: todayView, week: weekView, history: historyView, scripts: scriptsView })[page]();
   if (keep.t && $('#bankTitle')) $('#bankTitle').value = keep.t;
   if (keep.b && $('#bankBody')) $('#bankBody').value = keep.b;
   restoreFocus(snap);
@@ -214,8 +203,11 @@ function dayGroup(title, small, entries, isToday, isDay = true, wd = null) {
   if (!entries.length && !isToday) return '';
   const complete = isDay && entries.length > 0 && entries.every((e) => e.done);
   const doneN = entries.filter((e) => e.done).length;
-  return `<section class="day${isToday ? ' today' : ''}${complete ? ' complete' : ''}"${wd === null ? '' : ` data-wd="${wd}"`}>
-    <h3 class="group-title">${title}${isToday ? '<span class="today-tag">النهاردة</span>' : ''}${complete ? '<span class="done-tag">✓ اليوم اكتمل</span>' : ''}${small ? ` <small>${small}</small>` : ''}${entries.length ? `<span class="day-bar"><i style="width:${Math.round((doneN / entries.length) * 100)}%"></i></span><small class="count">${doneN}/${entries.length}</small>` : ''}</h3>
+  const uploadEntries = entries.filter((e) => e.is_video);
+  const uploadedN = uploadEntries.filter((e) => e.uploaded_at).length;
+  const allUploaded = isDay && uploadEntries.length > 0 && uploadedN === uploadEntries.length;
+  return `<section class="day${isToday ? ' today' : ''}${complete ? ' complete' : ''}${allUploaded ? ' all-uploaded' : ''}"${wd === null ? '' : ` data-wd="${wd}"`}>
+    <h3 class="group-title">${title}${isToday ? '<span class="today-tag">النهاردة</span>' : ''}${complete ? '<span class="done-tag">✓ اليوم اكتمل</span>' : ''}${allUploaded ? '<span class="up-tag">📤 اترفع كله</span>' : ''}${small ? ` <small>${small}</small>` : ''}${entries.length ? `<span class="day-bar" title="اكتمل ${doneN} من ${entries.length} · اترفع ${uploadedN} من ${uploadEntries.length}"><i style="width:${Math.round((doneN / entries.length) * 100)}%"></i><b style="width:${(uploadEntries.length ? Math.round((uploadedN / uploadEntries.length) * 100) : 0)}%"></b></span><small class="count">${doneN}/${entries.length}</small>` : ''}</h3>
     ${entries.length ? entries.map(taskCard).join('') : '<div class="empty">مفيش مهام النهاردة 🎉</div>'}
   </section>`;
 }
@@ -237,7 +229,9 @@ function weekStrip() {
 function weekView() {
   const d = state.data;
   const start = d.settings.weekStartDay;
-  let html = weekStrip();
+  let html = `<div class="page-heading"><div><span class="eyebrow">خطة الإنتاج</span><h2>جدول الأسبوع</h2><p>كل المهام ومعدلات الإنجاز لقنواتك</p></div><div class="week-picker"><button class="icon-btn" data-act="week-next" type="button" aria-label="الأسبوع التالي">›</button><strong>${fmtRange(d.weekStart)}</strong><button class="icon-btn" data-act="week-prev" type="button" aria-label="الأسبوع السابق">‹</button></div></div>`;
+  html += `<div class="week-legend">${d.channels.map((c) => `<span class="legend-chip"><i style="--channel:${esc(c.color)}"></i>${chLabel(c)}</span>`).join('')}<span class="legend-chip">الكل (${d.progress.totalVideos})</span></div>`;
+  html += weekStrip();
   for (let i = 0; i < 7; i++) {
     const wd = (start + i) % 7;
     const mine = d.entries.filter((e) => e.day === wd);
@@ -245,17 +239,51 @@ function weekView() {
     html += dayGroup(DAYS[wd], fmtDay(addDaysStr(d.weekStart, i)) + off, mine, wd === d.todayWeekday, true, wd);
   }
   html += dayGroup('📋 من غير يوم محدد', '', d.entries.filter((e) => e.day === null), false, false);
-  if (!d.entries.length) html += '<div class="empty">مفيش مهام. ضيف مهام من ⚙️ الإعدادات أو أضف فيديو إضافي تحت.</div>';
-  html += `<div class="box" style="margin-top:16px">
-      <h4>➕ فيديو إضافي للأسبوع ده (بونص)</h4>
-      <div class="row">
-        <select id="extraChannel" style="width:auto">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-        <input type="text" id="extraTitle" class="grow" placeholder="اسم الفيديو الإضافي" maxlength="300">
-        <button class="btn" data-act="add-extra" type="button">إضافة</button>
-      </div>
-    </div>`;
+  if (!d.entries.length) html += '<div class="empty">مفيش مهام. ضيف مهام من الإعدادات أو أضف فيديو إضافي تحت.</div>';
+  html += `<section class="quick-add card"><div><h3>➕ فيديو إضافي للأسبوع</h3><p class="hint">يُضاف كمهمة بونص لهذا الأسبوع</p></div><select id="extraChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input type="text" id="extraTitle" class="grow" placeholder="اسم الفيديو الإضافي" maxlength="300"><button class="btn" data-act="add-extra" type="button">إضافة</button></section>`;
   html += '<div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>';
   return html;
+}
+
+function todayView() {
+  const d = state.data;
+  const entries = d.entries.filter((e) => e.day === d.todayWeekday);
+  const done = entries.filter((e) => e.done).length;
+  const uploaded = entries.filter((e) => e.is_video && e.uploaded_at).length;
+  const scripts = entries.filter((e) => hasScript(e)).length;
+  const dayIndex = (d.todayWeekday - d.settings.weekStartDay + 7) % 7;
+  const date = fmtDay(addDaysStr(d.weekStart, dayIndex));
+  const channels = d.channels.map((c) => {
+    const mine = entries.filter((e) => e.channel_id === c.id);
+    if (!mine.length) return '';
+    return `<span class="channel-pill"><i style="--channel:${esc(c.color)}"></i>${chLabel(c)} <b>${mine.filter((e) => e.done).length}/${mine.length}</b></span>`;
+  }).join('');
+  return `<div class="page-heading"><div><span class="eyebrow">مساحة العمل اليومية</span><h2>مهام النهارده — ${DAYS[d.todayWeekday]} ${date}</h2><p>تابع التنفيذ والسكريبتات والرفع من مكان واحد</p></div><button class="btn" data-act="today-add-toggle" type="button">＋ فيديو لليوم</button></div>
+    <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="todayTitle" class="grow" type="text" maxlength="300" placeholder="اكتب فكرة أو عنوان الفيديو"><button class="btn" data-act="add-today" type="button">إضافة</button></section>
+    ${dayGroup('مهام النهارده', `${entries.length} مهام · ${done} مكتملة`, entries, true, true, d.todayWeekday)}
+    <details class="today-summary"><summary><span>ملخص اليوم والقنوات</span><span class="summary-count">${done} من ${entries.length} مهام مكتملة</span></summary>
+      <div class="today-summary-body"><section class="today-metrics"><article class="metric-card metric-primary"><span>إنجاز مهام اليوم</span><strong>${done}<small> / ${entries.length}</small></strong><div class="metric-track"><i style="width:${entries.length ? Math.round(done / entries.length * 100) : 0}%"></i></div></article><article class="metric-card"><span>📤 الفيديوهات المرفوعة</span><strong>${uploaded}<small> / ${entries.filter((e) => e.is_video).length}</small></strong></article><article class="metric-card"><span>✍️ السكريبتات المكتوبة</span><strong>${scripts}<small> / ${entries.length}</small></strong></article><article class="metric-card"><span>المتبقي لهدف الأسبوع</span><strong>${d.progress.remaining}<small> فيديو</small></strong></article></section>
+      <div class="today-channel-row"><span class="hint">القنوات:</span>${channels || '<span class="hint">مفيش مهام متعيّنة للقنوات النهارده</span>'}</div></div>
+    </details>
+    <div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>`;
+}
+function historyView() {
+  const h = state.history || { weeks: [], month: { from: '', to: '', channels: [] }, resets: [] };
+  const monthChannels = h.month?.channels || [];
+  const planned = monthChannels.reduce((n, c) => n + c.planned, 0);
+  const completed = monthChannels.reduce((n, c) => n + c.done, 0);
+  const percent = planned ? Math.floor(completed / planned * 100) : 0;
+  const bonus = h.weeks.reduce((n, w) => n + w.bonus, 0);
+  const maxVideos = Math.max(1, ...h.weeks.map((w) => Math.max(w.videos, w.target)));
+  const rows = h.weeks.map((w) => `<article class="history-row"><div><b>${fmtRange(w.week_start)}</b><small>${w.done}/${w.target} فيديو مكتمل</small></div><div class="history-bar"><i style="width:${w.percent}%"></i></div><strong>${w.percent}%</strong><span class="history-upload">📤 ${w.uploaded} مرفوع</span>${w.bonus ? `<span class="bonus">+${w.bonus} بونص</span>` : ''}</article>`).join('');
+  const channelBars = monthChannels.map((c) => `<div class="channel-progress"><div><span><i style="--channel:${esc(c.color)}"></i>${esc(c.name)}</span><b>${c.done}/${c.planned} · ${c.percent}%</b></div><div class="history-bar"><i style="--bar:${esc(c.color)};width:${c.percent}%"></i></div></div>`).join('');
+  const resets = h.resets.length ? h.resets.map((r) => `<div class="reset-log-row"><span>🔒</span><div><b>تصفير أسبوع ${fmtDay(r.week_start)}</b><small>${fmtDateTime(r.at)}</small></div><strong>${r.done}/${r.target}</strong></div>`).join('') : '<div class="empty">مفيش عمليات تصفير مسجلة</div>';
+  const bars = h.weeks.slice(0, 8).reverse().map((w) => `<div class="trend-col" title="${fmtRange(w.week_start)} · ${w.done}/${w.target}"><i style="height:${Math.max(5, Math.round(w.done / maxVideos * 100))}%"></i><small>${fmtDay(w.week_start)}</small></div>`).join('');
+  return `<div class="page-heading"><div><span class="eyebrow">متابعة الأداء</span><h2>السجل والتحليلات</h2><p>ملخص الالتزام والإنتاج عبر الأسابيع والقنوات</p></div><span class="period-chip">${h.month?.from ? `${fmtDay(h.month.from)} — ${fmtDay(addDaysStr(h.month.to, -1))}` : 'هذا الشهر'}</span></div>
+    <section class="history-kpis"><article class="metric-card"><span>إجمالي الفيديوهات المكتملة هذا الشهر</span><strong>${completed}<small> / ${planned}</small></strong></article><article class="metric-card"><span>معدل الالتزام الشهري</span><strong>${percent}<small>%</small></strong><div class="metric-track"><i style="width:${percent}%"></i></div></article><article class="metric-card"><span>فيديوهات بونص</span><strong>${bonus}</strong></article></section>
+    <div class="analytics-grid"><section class="panel"><div class="panel-head"><div><h3>التزام القنوات</h3><p>المكتمل مقارنة بالمخطط لهذا الشهر</p></div><span class="panel-icon">◉</span></div>${channelBars || '<div class="empty">لا توجد بيانات للقنوات في الفترة الحالية</div>'}</section><section class="panel"><div class="panel-head"><div><h3>اتجاه الإنتاج الأسبوعي</h3><p>آخر الأسابيع المسجلة</p></div><span class="panel-icon">⌁</span></div><div class="trend-chart">${bars || '<div class="empty">لا توجد أسابيع مسجلة بعد</div>'}</div></section></div>
+    <section class="panel history-panel"><div class="panel-head"><div><h3>سجل الأسابيع</h3><p>الإنجاز والرفع والزيادة لكل أسبوع</p></div><span class="panel-icon">◷</span></div><div class="history-list">${rows || '<div class="empty">لا يوجد سجل إنتاج بعد</div>'}</div></section>
+    <section class="panel history-panel"><div class="panel-head"><div><h3>سجل التصفير</h3><p>نتائج الأسابيع قبل إعادة تعيينها</p></div><span class="panel-icon">⟲</span></div><div class="reset-log">${resets}</div></section>`;
 }
 
 function taskCard(e) {
@@ -267,6 +295,7 @@ function taskCard(e) {
       <label class="chk"><input type="checkbox" data-act="done" data-id="${e.id}" ${e.done ? 'checked' : ''}><span>اكتمل</span></label>
       <label class="chk up" title="${esc(upTitle)}"><input type="checkbox" data-act="uploaded" data-id="${e.id}" ${e.uploaded_at ? 'checked' : ''}><span>تم الرفع</span></label>
       ${scriptFlag(e)}
+      ${noteFlag(e)}
       ${ch ? `<span class="badge" style="--c:${esc(ch.color)}">${chLabel(ch)}</span>` : ''}
       <div class="t-title" data-act="toggle" data-id="${e.id}">${esc(e.title)}${e.chosen_title ? `<small>🎯 ${esc(e.chosen_title)}</small>` : ''}</div>
       ${e.is_video ? '' : '<span class="flag">مهمة عادية</span>'}
@@ -282,31 +311,21 @@ function taskBody(e) {
   const busyT = state.busy.has(`t${e.id}`);
   const chosenProvider = state.provider || d.settings.aiProvider;
   return `<div class="t-body">
-    <div class="row">
+    <div class="row task-title-row">
       <div class="grow"><label class="lbl">اسم المهمة</label>
         <input type="text" data-id="${e.id}" data-field="title" value="${esc(e.title)}" maxlength="300"></div>
-      <div><label class="lbl">القناة</label>
-        <select data-id="${e.id}" data-field="channel_id"><option value="">— من غير قناة —</option>
-          ${d.channels.map((c) => `<option value="${c.id}" ${c.id === e.channel_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
-      <div><label class="lbl">اليوم</label>
-        <select data-id="${e.id}" data-field="day"><option value="">أي يوم</option>
-          ${DAYS.map((n, i) => `<option value="${i}" ${e.day === i ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
     </div>
-    <div class="row">
-      <label><input type="checkbox" data-id="${e.id}" data-field="is_video" ${e.is_video ? 'checked' : ''}> فيديو (بيتحسب في هدف الـ ${d.progress.target})</label>
-      <button class="btn small danger" data-act="delete" data-id="${e.id}" type="button">🗑️ حذف المهمة</button>
-    </div>
+    <section class="production-section script-editor-section"><div class="section-heading"><div><h4>✍️ نص السكريبت</h4><p>اكتب النص وراجعه هنا — الحفظ تلقائي</p></div><span class="section-mark">كتابة</span></div>
+      <textarea class="auto script-editor" data-id="${e.id}" data-field="script" placeholder="ابدأ كتابة السكريبت هنا… المساحة تتمدد تلقائيًا مع النص">${esc(e.script)}</textarea>
+    </section>
 
-    <div class="cols">
-      <div><label class="lbl">✍️ السكريبت</label>
-        <textarea class="auto" data-id="${e.id}" data-field="script" placeholder="اكتب السكريبت هنا… الخانة بتكبر لوحدها">${esc(e.script)}</textarea></div>
+    <div class="production-grid">
+    <section class="box production-panel notes-panel"><h4>📝 ملاحظات وروابط</h4>
+      <textarea class="auto" data-id="${e.id}" data-field="notes" placeholder="ملاحظات، مراجع، أو روابط مرتبطة بالفيديو">${esc(e.notes)}</textarea>
+      <ul class="links">${linksHtml(e.notes)}</ul>
+    </section>
 
-      <div><label class="lbl">📝 ملاحظات وروابط ${noteFlag(e)}</label>
-        <textarea class="auto" data-id="${e.id}" data-field="notes" placeholder="اكتب أي ملحوظة أو الصق أي رابط (مرجع، مصدر، فيديو…)">${esc(e.notes)}</textarea>
-        <ul class="links">${linksHtml(e.notes)}</ul></div>
-    </div>
-
-    <div class="box"><h4>✨ العناوين بالذكاء الاصطناعي</h4>
+    <section class="box production-panel titles-panel"><h4>✨ اقتراحات العناوين</h4>
       <div class="row">
         <select data-prov style="width:auto">
           <option value="auto" ${chosenProvider === 'auto' ? 'selected' : ''}>تلقائي</option>
@@ -324,16 +343,13 @@ function taskBody(e) {
             <button class="btn small ghost" data-act="copy-title" data-id="${e.id}" data-i="${i}" type="button">📋</button></div>`,
         )
         .join('')}</div>
-    </div>
+    </section>
 
-    <div class="box"><h4>🖼️ الصورة المصغرة</h4>
-      <label class="lbl">البرومبت (بيتكتب تلقائي من العنوان وأسلوب القناة — عدّله لو عايز)</label>
-      <textarea class="auto short" data-id="${e.id}" data-field="thumb_prompt" dir="auto">${esc(e.thumb_prompt || e.suggested_thumb_prompt)}</textarea>
-      <div class="row" style="margin-top:8px">
-        <button class="btn small" data-act="flow" data-id="${e.id}" type="button">📋 انسخ الوصف وافتح Flow</button>
-      </div>
-      <p class="hint">هننسخ الوصف ونفتح Google Flow؛ الصقه هناك واضغط إنشاء الصورة.</p>
+    <section class="box production-panel thumbnail-panel"><div class="panel-title"><h4>🖼️ الصورة المصغرة</h4><span class="section-mark">Google Flow</span></div>
+      <p class="hint">البرومبت جاهز حسب عنوان الفيديو وإعدادات القناة.</p>
+      <button class="btn flow-button" data-act="flow" data-id="${e.id}" type="button">📋 انسخ البرومبت وافتح Google Flow</button>
       ${e.thumb_url ? `<div class="thumb"><img src="${esc(e.thumb_url)}" alt="الصورة المصغرة" loading="lazy"><div class="row"><a class="btn small ghost" href="${esc(e.thumb_url)}" download>⬇️ تحميل الصورة</a></div></div>` : ''}
+    </section>
     </div>
   </div>`;
 }
@@ -399,7 +415,7 @@ function scriptCard(e) {
       <select data-id="${e.id}" data-field="day" title="انقل المهمة ليوم تاني"><option value="">أي يوم</option>
         ${DAYS.map((n, i) => `<option value="${i}" ${e.day === i ? 'selected' : ''}>${n}</option>`).join('')}</select>
     </div>
-    <div class="t-body"><textarea class="auto" data-id="${e.id}" data-field="script" placeholder="اكتب سكريبت «${esc(e.title)}» هنا… الخانة بتكبر لوحدها">${esc(e.script)}</textarea></div>
+    <div class="t-body"><label class="script-editor-label" for="script-${e.id}">✍️ مساحة كتابة السكريبت <small>الحفظ تلقائي</small></label><textarea id="script-${e.id}" class="auto script-editor" data-id="${e.id}" data-field="script" placeholder="اكتب سكريبت «${esc(e.title)}» هنا… المساحة تتمدد تلقائيًا">${esc(e.script)}</textarea><div class="script-card-foot"><span>${hasScript(e) ? '✅ السكريبت محفوظ' : 'ابدأ الكتابة — سيظهر اكتمال السكريبت تلقائيًا'}</span><span>${esc(ch?.name || 'بدون قناة')}</span></div></div>
   </article>`;
 }
 
@@ -467,6 +483,29 @@ document.addEventListener('click', (ev) => {
   const act = el.dataset.act;
   guarded(async () => {
     switch (act) {
+      case 'week-prev':
+      case 'header-week-prev':
+        state.viewWeek = state.data.prevWeek;
+        if (pageIs() === 'today') location.hash = '#/week';
+        return load();
+      case 'week-next':
+      case 'header-week-next':
+        state.viewWeek = state.data.nextWeek;
+        if (pageIs() === 'today') location.hash = '#/week';
+        return load();
+      case 'today-add-toggle': {
+        const form = $('#todayQuickAdd');
+        form.hidden = !form.hidden;
+        if (!form.hidden) $('#todayTitle').focus();
+        return;
+      }
+      case 'add-today': {
+        const title = $('#todayTitle').value.trim();
+        if (!title) return toast('اكتب فكرة الفيديو الأول', true);
+        const created = await api('/entries', { method: 'POST', body: { title, channel_id: Number($('#todayChannel').value) || null, day: state.data.todayWeekday } });
+        state.open.add(created.id);
+        return load();
+      }
       case 'strip':
         document.querySelector(`.day[data-wd="${el.dataset.wd}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
@@ -587,6 +626,7 @@ document.addEventListener('change', (ev) => {
 function refreshScriptUi(e) {
   const on = hasScript(e);
   document.querySelectorAll(`[data-sflag="${e.id}"]`).forEach((f) => (f.hidden = !on));
+  document.querySelectorAll(`[data-nflag="${e.id}"]`).forEach((f) => (f.hidden = on || !hasNotes(e)));
   document.querySelector(`.s-card[data-sid="${e.id}"]`)?.classList.toggle('ready', on);
   document.querySelectorAll('.schip').forEach((c) => {
     const k = c.dataset.d;
@@ -617,7 +657,7 @@ document.addEventListener('input', (ev) => {
   e[field] = el.value;
   if (field === 'script') refreshScriptUi(e);
   if (field === 'notes') {
-    document.querySelectorAll(`[data-nflag="${e.id}"]`).forEach((f) => (f.hidden = !hasNotes(e)));
+    document.querySelectorAll(`[data-nflag="${e.id}"]`).forEach((f) => (f.hidden = hasScript(e) || !hasNotes(e)));
     const ul = el.parentElement.querySelector('.links');
     if (ul) ul.innerHTML = linksHtml(el.value);
   }
@@ -630,10 +670,19 @@ document.addEventListener('focusout', (ev) => {
   if (el.dataset?.bid) flushOne(`bank:${el.dataset.bid}:${el.dataset.bf}`);
 });
 window.addEventListener('pagehide', () => flushAll(true));
-window.addEventListener('resize', autosizeAll);
+window.addEventListener('resize', () => autosizeAll());
 window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
-  render();
+  if (state.modal?.settingsPage && location.hash !== '#/settings') {
+    state.modal = null;
+    $('#modalRoot').innerHTML = '';
+    document.body.classList.remove('settings-open');
+  }
+  if (state.modal?.settingsPage && location.hash === '#/settings') return;
+  if (pageIs() === 'today' && state.viewWeek) {
+    state.viewWeek = null;
+    guarded(load);
+  } else render();
 });
 window.addEventListener('online', () => setOnline(true));
 window.addEventListener('offline', () => setOnline(false));
@@ -653,7 +702,10 @@ async function copyText(text) {
     window.prompt('انسخ النص من هنا:', text);
   }
 }
-const promptValue = (id) => $(`[data-id="${id}"][data-field="thumb_prompt"]`)?.value || entryById(id).suggested_thumb_prompt;
+const promptValue = (id) => {
+  const e = entryById(id);
+  return e?.thumb_prompt?.trim() || e?.suggested_thumb_prompt || '';
+};
 
 async function genTitles(id) {
   state.busy.add(`t${id}`);
@@ -686,11 +738,15 @@ async function currentSubscription() {
 async function updateNotifyBtn() {
   const btn = $('#btnNotify');
   if (!pushSupported()) {
-    btn.textContent = '🔕 الإشعارات مش مدعومة';
+    btn.textContent = '🔕';
+    btn.title = 'الإشعارات مش مدعومة في المتصفح ده';
+    btn.setAttribute('aria-label', btn.title);
     return;
   }
   const sub = await currentSubscription();
-  btn.textContent = sub && Notification.permission === 'granted' ? '🔔 مفعّلة (جرّبها)' : '🔔 فعّل الإشعارات';
+  btn.textContent = '🔔';
+  btn.title = sub && Notification.permission === 'granted' ? 'الإشعارات مفعّلة — اضغط لإرسال إشعار تجريبي' : 'فعّل الإشعارات';
+  btn.setAttribute('aria-label', btn.title);
 }
 
 async function enableNotifications() {
@@ -724,22 +780,30 @@ async function onNotifyClick() {
 
 // ───────────── الإعدادات (مودال) ─────────────
 async function openSettings() {
-  const tpl = await api('/template');
   const d = state.data;
+  if (!d) return toast('استنى تحميل بيانات الصفحة الأول', true);
+  state.returnHash = location.hash && location.hash !== '#/settings' ? location.hash : '#/today';
+  state.modal = { settingsPage: true };
+  document.body.classList.add('settings-open');
+  location.hash = '#/settings';
   state.modal = {
     settings: JSON.parse(JSON.stringify(d.settings)),
     channels: d.channels.map((c) => ({ ...c })),
-    tasks: tpl.map((t) => ({ ...t })),
+    tasks: (d.template || []).map((t) => ({ ...t })),
     deletedChannels: [],
     tmp: -1,
+    settingsPage: true,
   };
   renderModal();
 }
-
 function closeModal() {
   if (!state.modal) return;
+  const restore = state.modal.settingsPage ? state.returnHash : '';
   state.modal = null;
   $('#modalRoot').innerHTML = '';
+  document.body.classList.remove('settings-open');
+  if (restore && location.hash !== restore) location.hash = restore;
+  else if (restore) render();
 }
 
 function renderModal() {
@@ -752,10 +816,32 @@ function renderModal() {
     `<option value="">— من غير قناة —</option>${m.channels
       .map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name || 'قناة جديدة')}</option>`)
       .join('')}`;
-  $('#modalRoot').innerHTML = `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true" aria-label="الإعدادات">
-    <h2>⚙️ الإعدادات</h2>
+  const taskRow = ({ task: t, index: i, order }) => `<article class="template-task-row" data-tk="${i}">
+    <span class="template-task-order">${String(order).padStart(2, '0')}</span>
+    <div class="template-task-fields">
+      <input type="text" data-k="title" value="${esc(t.title)}" placeholder="اسم المهمة أو الفيديو" maxlength="300" aria-label="اسم المهمة">
+      <div class="template-task-controls">
+        <select data-k="channel" aria-label="القناة">${chOpts(t.channel_id)}</select>
+        <select data-k="day" aria-label="نقل إلى يوم">${dayOpts(t.day)}</select>
+        <label class="template-video-toggle"><input type="checkbox" data-k="video" ${t.is_video ? 'checked' : ''}> فيديو</label>
+        <button class="btn small danger" data-act="m-del-task" data-i="${i}" type="button" aria-label="حذف المهمة">حذف</button>
+      </div>
+    </div>
+  </article>`;
+  const taskGroup = (day, label) => {
+    const items = m.tasks.map((task, index) => ({ task, index })).filter(({ task }) => task.day === day);
+    const videoCount = items.filter(({ task }) => task.is_video).length;
+    return `<section class="template-day-group" data-template-day="${day ?? 'none'}">
+      <header class="template-day-head"><div class="template-day-name"><span class="template-day-dot"></span><h4>${label}</h4><small>${items.length} مهمة · ${videoCount} فيديو</small></div>
+        <button class="btn small ghost" data-act="m-add-task" data-day="${day ?? 'none'}" type="button">＋ إضافة مهمة</button></header>
+      <div class="template-task-list">${items.length ? items.map((item, index) => taskRow({ ...item, order: index + 1 })).join('') : '<p class="template-day-empty">لا توجد مهام في هذا اليوم</p>'}</div>
+    </section>`;
+  };
+  $('#modalRoot').innerHTML = `<div class="modal-back settings-page"><div class="modal settings-sheet" role="dialog" aria-modal="true" aria-label="الإعدادات">
+    <div class="settings-intro"><span class="eyebrow">تخصيص مساحة العمل</span><h2>إعدادات منصة الإنتاج والقنوات</h2><p class="hint">ضبط أهداف الأسبوع، أسلوب القنوات، وأدوات إنتاج المحتوى.</p></div>
+    <div class="settings-kpis"><article><span>الهدف الأسبوعي</span><strong>${s.weeklyTarget} فيديو</strong></article><article><span>أيام العمل</span><strong>${s.workDays.length} أيام</strong></article><article><span>القنوات النشطة</span><strong>${m.channels.length} قنوات</strong></article><article><span>محرّك الذكاء الاصطناعي</span><strong>${{ auto: 'تلقائي', anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI' }[s.aiProvider] || 'تلقائي'}</strong></article></div>
 
-    <section><h3>🎯 هدف الأسبوع وأيام الشغل</h3>
+    <section><h3>🎯 هدف الأسبوع والجدول الزمني</h3>
       <div class="row">
         <div><label class="lbl">عدد الفيديوهات = أسبوع كامل</label><input type="number" id="s_target" min="1" max="200" value="${s.weeklyTarget}" style="width:110px"></div>
         <div><label class="lbl">الأسبوع بيبدأ يوم</label><select id="s_start" style="width:auto">${DAYS.map((n, i) => `<option value="${i}" ${s.weekStartDay === i ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
@@ -779,34 +865,21 @@ function renderModal() {
       <p class="hint">الإشعار بيوصل طول ما السيرفر شغال (على جهازك أو على استضافة شغالة 24 ساعة).</p>
     </section>
 
-    <section><h3>📺 القنوات</h3>
-      ${m.channels
+    <section><h3>إدارة القنوات وأسلوب المحتوى</h3>
+      <div class="settings-channel-grid">${m.channels
         .map(
-          (c, i) => `<div class="edit-row ch" data-ch="${i}">
-            <input type="text" data-k="icon" class="icon-in" value="${esc(c.icon || '')}" placeholder="😀" maxlength="8" title="أيقونة القناة (إيموجي)">
-            <input type="text" data-k="name" value="${esc(c.name)}" placeholder="اسم القناة" maxlength="60">
-            <input type="color" data-k="color" value="${esc(c.color)}">
-            <button class="btn small danger" data-act="m-del-ch" data-i="${i}" type="button">حذف</button>
-            <textarea class="auto short" data-k="style" placeholder="أسلوب القناة (بيساعد الذكاء الاصطناعي في العناوين والصور)">${esc(c.style)}</textarea>
-          </div>`,
+          (c, i) => `<article class="channel-edit-card" data-ch="${i}">
+            <div class="channel-edit-head"><input type="text" data-k="icon" class="icon-in" value="${esc(c.icon || '')}" placeholder="😀" maxlength="8" title="أيقونة القناة (إيموجي)"><input type="text" data-k="name" value="${esc(c.name)}" placeholder="اسم القناة" maxlength="60"><input type="color" data-k="color" value="${esc(c.color)}"><button class="btn small danger" data-act="m-del-ch" data-i="${i}" type="button">حذف</button></div>
+            <label class="lbl">أسلوب وهوية القناة<textarea class="auto short" data-k="style" placeholder="وصف نبرة القناة وهويتها البصرية، ويُستخدم في العناوين والصور">${esc(c.style)}</textarea></label>
+            <div class="channel-prompt-grid"><label class="lbl">📝 برومبت عناوين الفيديو<textarea class="auto short" data-k="title_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وعدد العناوين تُضاف تلقائيًا.">${esc(c.title_prompt || '')}</textarea></label><label class="lbl">🖼️ برومبت الصور المصغرة<textarea class="auto short" data-k="image_prompt" placeholder="اتركه فارغًا لاستخدام الافتراضي. بيانات الفيديو وأسلوب القناة يُضافان تلقائيًا.">${esc(c.image_prompt || '')}</textarea></label></div>
+          </article>`,
         )
-        .join('')}
+        .join('')}</div>
       <button class="btn small ghost" data-act="m-add-ch" type="button">➕ قناة جديدة</button>
     </section>
 
-    <section><h3>📋 قائمة المهام الأسبوعية الثابتة (${m.tasks.length})</h3>
-      ${m.tasks
-        .map(
-          (t, i) => `<div class="edit-row" data-tk="${i}">
-            <select data-k="channel">${chOpts(t.channel_id)}</select>
-            <input type="text" data-k="title" value="${esc(t.title)}" placeholder="اسم المهمة / الفيديو" maxlength="300">
-            <select data-k="day">${dayOpts(t.day)}</select>
-            <label title="بيتحسب في هدف الفيديوهات"><input type="checkbox" data-k="video" ${t.is_video ? 'checked' : ''}> فيديو</label>
-            <button class="btn small danger" data-act="m-del-task" data-i="${i}" type="button">✕</button>
-          </div>`,
-        )
-        .join('')}
-      <button class="btn small ghost" data-act="m-add-task" type="button">➕ مهمة جديدة</button>
+    <section class="template-manager"><div class="template-section-intro"><div><h3>📋 قائمة المهام الأسبوعية الثابتة</h3><p class="hint">رتّب مهامك حسب اليوم. استخدم قائمة النقل لتغيير يوم أي مهمة.</p></div><span class="template-total">${m.tasks.length} مهمة</span></div>
+      <div class="template-day-groups">${DAYS.map((label, day) => taskGroup(day, label)).join('')}${taskGroup(null, 'من غير يوم')}</div>
       <p class="hint">التعديل بيتطبق على الأسبوع الحالي والأسابيع الجاية. المهام اللي خلصت أو فيها سكريبت متتمسحش.</p>
     </section>
 
@@ -829,7 +902,8 @@ function renderModal() {
 
     <div class="foot"><button class="btn ghost" data-act="m-close" type="button">إلغاء</button><button class="btn" data-act="m-save" type="button">💾 حفظ</button></div>
   </div></div>`;
-  autosizeAll();
+  autosizeAll($('#modalRoot'));
+
 }
 
 function readModal() {
@@ -851,6 +925,8 @@ function readModal() {
     c.name = $('[data-k=name]', row).value;
     c.color = $('[data-k=color]', row).value;
     c.style = $('[data-k=style]', row).value;
+    c.title_prompt = $('[data-k=title_prompt]', row).value;
+    c.image_prompt = $('[data-k=image_prompt]', row).value;
   });
   m.tasks.forEach((t, i) => {
     const row = $(`[data-tk="${i}"]`, root);
@@ -865,6 +941,13 @@ document.addEventListener('change', (ev) => {
   // تلوين أزرار أيام الشغل لحظيًا
   const wd = ev.target.dataset?.wd;
   if (wd !== undefined) ev.target.closest('.pill').classList.toggle('on', ev.target.checked);
+  if (ev.target.matches?.('#modalRoot [data-k="day"]')) {
+    const index = ev.target.closest('[data-tk]')?.dataset.tk;
+    if (index === undefined) return;
+    readModal();
+    renderModal();
+    return $(`[data-tk="${index}"] [data-k="day"]`, $('#modalRoot'))?.focus();
+  }
 });
 
 async function modalAction(act, el) {
@@ -885,7 +968,7 @@ async function modalAction(act, el) {
   readModal();
   const i = Number(el.dataset.i);
   if (act === 'm-add-ch') {
-    m.channels.push({ id: m.tmp--, name: '', color: '#4f8cff', style: '', icon: '' });
+    m.channels.push({ id: m.tmp--, name: '', color: '#4f8cff', style: '', icon: '', title_prompt: '', image_prompt: '' });
     return renderModal();
   }
   if (act === 'm-del-ch') {
@@ -895,10 +978,11 @@ async function modalAction(act, el) {
     return renderModal();
   }
   if (act === 'm-add-task') {
-    m.tasks.push({ title: '', channel_id: m.channels[0]?.id ?? null, day: null, is_video: true });
+    const day = el.dataset.day === 'none' || el.dataset.day === undefined ? null : Number(el.dataset.day);
+    m.tasks.push({ title: '', channel_id: m.channels[0]?.id ?? null, day, is_video: true });
+    const newIndex = m.tasks.length - 1;
     renderModal();
-    const rows = $$('[data-tk]');
-    return rows.at(-1)?.querySelector('[data-k=title]')?.focus();
+    return $(`[data-tk="${newIndex}"] [data-k="title"]`, $('#modalRoot'))?.focus();
   }
   if (act === 'm-del-task') {
     m.tasks.splice(i, 1);
@@ -927,22 +1011,22 @@ async function saveSettings() {
   const btn = $('[data-act="m-save"]');
   btn.disabled = true;
   try {
-    const idMap = new Map();
-    for (const c of m.channels) {
-      const body = { name: c.name.trim(), color: c.color, style: c.style, icon: c.icon || '' };
-      if (c.id > 0) await api(`/channels/${c.id}`, { method: 'PATCH', body });
-      else idMap.set(c.id, (await api('/channels', { method: 'POST', body })).id);
-    }
-    for (const id of m.deletedChannels) await api(`/channels/${id}`, { method: 'DELETE' });
     const tasks = m.tasks.map((t) => ({
       id: t.id > 0 ? t.id : undefined,
-      channel_id: idMap.get(t.channel_id) ?? t.channel_id,
+      channel_id: t.channel_id,
       title: t.title.trim(),
       day: t.day,
       is_video: t.is_video,
     }));
-    await api('/template', { method: 'PUT', body: { tasks } });
-    await api('/settings', { method: 'PUT', body: m.settings });
+    await api('/workspace', {
+      method: 'PUT',
+      body: {
+        settings: m.settings,
+        channels: m.channels.map((channel) => ({ ...channel, name: channel.name.trim() })),
+        tasks,
+        deletedChannels: m.deletedChannels,
+      },
+    });
     closeModal();
     await load();
     toast('✅ الإعدادات اتحفظت');
