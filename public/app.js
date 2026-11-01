@@ -164,8 +164,15 @@ function render() {
   const titles = { today: 'النهارده', week: 'الأسبوع', history: 'السجل والتحليلات', scripts: 'السكريبتات' };
   document.title = `${titles[page]} — مدير إنتاج المحتوى`;
   const keep = { t: $('#bankTitle')?.value, b: $('#bankBody')?.value };
+  const progress = $('#progress');
+  const main = document.querySelector('main');
+  if (progress.parentElement !== main) main.insertBefore(progress, $('#view'));
   if (!$('#progress').hidden) renderProgress();
   $('#view').innerHTML = ({ today: todayView, week: weekView, history: historyView, scripts: scriptsView })[page]();
+  if (page === 'today') {
+    const mount = $('#todayWeeklySummary');
+    if (mount) mount.append(progress);
+  }
   if (keep.t && $('#bankTitle')) $('#bankTitle').value = keep.t;
   if (keep.b && $('#bankBody')) $('#bankBody').value = keep.b;
   restoreFocus(snap);
@@ -259,12 +266,13 @@ function todayView() {
     return `<span class="channel-pill"><i style="--channel:${esc(c.color)}"></i>${chLabel(c)} <b>${mine.filter((e) => e.done).length}/${mine.length}</b></span>`;
   }).join('');
   return `<div class="page-heading"><div><span class="eyebrow">مساحة العمل اليومية</span><h2>مهام النهارده — ${DAYS[d.todayWeekday]} ${date}</h2><p>تابع التنفيذ والسكريبتات والرفع من مكان واحد</p></div><button class="btn" data-act="today-add-toggle" type="button">＋ فيديو لليوم</button></div>
-    <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="todayTitle" class="grow" type="text" maxlength="300" placeholder="اكتب فكرة أو عنوان الفيديو"><button class="btn" data-act="add-today" type="button">إضافة</button></section>
-    ${dayGroup('مهام النهارده', `${entries.length} مهام · ${done} مكتملة`, entries, true, true, d.todayWeekday)}
-    <details class="today-summary"><summary><span>ملخص اليوم والقنوات</span><span class="summary-count">${done} من ${entries.length} مهام مكتملة</span></summary>
+    <details class="today-summary" open><summary><span>ملخص اليوم والقنوات</span><span class="summary-count">${done} من ${entries.length} مهام مكتملة</span></summary>
       <div class="today-summary-body"><section class="today-metrics"><article class="metric-card metric-primary"><span>إنجاز مهام اليوم</span><strong>${done}<small> / ${entries.length}</small></strong><div class="metric-track"><i style="width:${entries.length ? Math.round(done / entries.length * 100) : 0}%"></i></div></article><article class="metric-card"><span>📤 الفيديوهات المرفوعة</span><strong>${uploaded}<small> / ${entries.filter((e) => e.is_video).length}</small></strong></article><article class="metric-card"><span>✍️ السكريبتات المكتوبة</span><strong>${scripts}<small> / ${entries.length}</small></strong></article><article class="metric-card"><span>المتبقي لهدف الأسبوع</span><strong>${d.progress.remaining}<small> فيديو</small></strong></article></section>
       <div class="today-channel-row"><span class="hint">القنوات:</span>${channels || '<span class="hint">مفيش مهام متعيّنة للقنوات النهارده</span>'}</div></div>
     </details>
+    <details class="week-summary"><summary><span>ملخص الأسبوع</span><span class="summary-count">${d.progress.done} من ${d.progress.target} فيديو · ${d.progress.percent}%</span></summary><div class="week-summary-body" id="todayWeeklySummary"></div></details>
+    <section class="quick-add card" id="todayQuickAdd" hidden><select id="todayChannel">${d.channels.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><input id="todayTitle" class="grow" type="text" maxlength="300" placeholder="اكتب فكرة أو عنوان الفيديو"><button class="btn" data-act="add-today" type="button">إضافة</button></section>
+    ${dayGroup('مهام النهارده', `${entries.length} مهام · ${done} مكتملة`, entries, true, true, d.todayWeekday)}
     <div class="reset-row"><button class="btn ghost" data-act="open-reset" type="button">🔒 إعادة تعيين الجدول بالكامل</button></div>`;
 }
 function historyView() {
@@ -601,7 +609,13 @@ document.addEventListener('click', (ev) => {
 document.addEventListener('change', (ev) => {
   const el = ev.target;
   if (el.dataset?.act === 'done') {
-    return guarded(() => mutate(Number(el.dataset.id), { done: el.checked }));
+    const id = Number(el.dataset.id);
+    const todayTasks = state.data.entries.filter((entry) => entry.day === state.data.todayWeekday);
+    const completedDay = el.checked && todayTasks.length > 0 && todayTasks.every((entry) => entry.done || entry.id === id);
+    return guarded(async () => {
+      await mutate(id, { done: el.checked });
+      if (completedDay && pageIs() === 'today') celebrateToday();
+    });
   }
   if (el.dataset?.act === 'uploaded') {
     const id = Number(el.dataset.id);
@@ -621,6 +635,19 @@ document.addEventListener('change', (ev) => {
   if (field === 'day') return guarded(() => mutate(id, { day: el.value === '' ? null : Number(el.value) }));
   if (field === 'is_video') return guarded(() => mutate(id, { is_video: el.checked }));
 });
+
+function celebrateToday() {
+  document.querySelector('.day-celebration')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'day-celebration';
+  overlay.setAttribute('role', 'status');
+  overlay.setAttribute('aria-live', 'polite');
+  overlay.innerHTML = `<div class="celebration-confetti" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<span style="--i:${i}">${['✦', '✧', '●', '✦', '✺'][i % 5]}</span>`).join('')}</div><div class="celebration-card"><span class="celebration-icon">🎉</span><p class="eyebrow">إنجاز اليوم اكتمل</p><h2>عاش! خلّصت مهام النهارده</h2><p>كل خطوة خلصتها قرّبتك من هدفك الأسبوعي.</p><button class="btn" type="button" data-celebrate-close>كمّل بنفس الحماس</button></div>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay || ev.target.closest('[data-celebrate-close]')) close(); });
+  window.setTimeout(close, 4200);
+}
 
 // تحديث علامة "تم كتابة السكريبت" والعدّادات وقت الكتابة من غير إعادة رسم
 function refreshScriptUi(e) {
